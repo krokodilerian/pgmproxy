@@ -416,6 +416,7 @@ int main(int argc, char **argv) {
 	if (argc != 7 ) {
 		printf ("Usage: %s intype ip port outtype ip port\n", argv[0]);
 		printf ("\tTypes: 0 - stdin/stdout, 1 - UDP, 2 - PGM\n");
+		printf ("\tFor PGM use INTERFACE;IP\n");
 		exit(3);
 	}
 
