@@ -19,6 +19,8 @@
 #include <errno.h>
 #include <err.h>
 
+#include <glib.h>
+
 #include <pwd.h>
 
 #include <pgm/pgm.h>
@@ -74,6 +76,13 @@ struct wrdata {
 };
 
 
+static int              g_max_tpdu = 1500;
+static int              g_max_rte = 400*1000;
+static int              g_sqns = 100;
+static gboolean         g_multicast_loop = FALSE;
+static int              g_udp_encap_port = 8000;
+
+
 size_t read_socket(void *fd, char *buff, size_t len) {
 	return read(*((int *) fd), buff, len);	
 };
@@ -81,6 +90,29 @@ size_t read_socket(void *fd, char *buff, size_t len) {
 size_t write_socket(void *fd, char *buff, size_t len) {
 	return write(*((int *) fd), buff, len);	
 };
+
+size_t write_pgm(void *gsock, char *buff, size_t len) {
+	size_t out, clen=len;
+	int status = PGM_IO_STATUS_NORMAL;
+
+	status = pgm_send(gsock, buff, clen, &out);
+
+	if (status == PGM_IO_STATUS_NORMAL) return out;
+	return -1;
+
+}
+
+size_t read_pgm(void *gsock, char *buff, size_t len) {
+	size_t out, clen=len;
+	int status = PGM_IO_STATUS_NORMAL;
+
+	status = pgm_recv(gsock, buff, clen, 0, &out, NULL);
+
+	if (status == PGM_IO_STATUS_NORMAL) return out;
+	return -1;
+
+}
+
 
 #ifndef max
 	#define max( a, b ) ( ((a) > (b)) ? (a) : (b) )
@@ -243,6 +275,129 @@ void *wrt_thread(void *ptr) {
 #undef WP
 
 
+// direction: 0 - recv, 1 - send
+
+struct pgm_sock_t *create_pgm_socket(char *net, char *port, int direction) {
+	pgm_error_t* pgm_err = NULL;
+	pgm_sock_t*  g_sock = NULL;
+	sa_family_t sa_family = AF_INET;
+	struct pgm_addrinfo_t* res = NULL;
+
+	ASSERTF (!pgm_getaddrinfo (net, NULL, &res, &pgm_err), "Parsing network parameter: %s", pgm_err->message);
+
+	DBG("len send %d recv %d\n", res->ai_send_addrs_len, res->ai_recv_addrs_len);
+
+	sa_family = res->ai_send_addrs[0].gsr_group.ss_family;
+
+	ASSERTF(!pgm_init (&pgm_err), "Error intializing openpgm");
+	ASSERTF(!pgm_socket (&g_sock, sa_family, SOCK_SEQPACKET, IPPROTO_UDP, &pgm_err), "Failed PGM socket creation");
+
+	pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_UDP_ENCAP_UCAST_PORT, &g_udp_encap_port, sizeof(g_udp_encap_port));
+	pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_UDP_ENCAP_MCAST_PORT, &g_udp_encap_port, sizeof(g_udp_encap_port));
+
+
+	const int no_router_assist = 0;
+	pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_IP_ROUTER_ALERT, &no_router_assist, sizeof(no_router_assist));
+
+	int send_only, recv_only;
+
+	if (direction == 0) {
+		recv_only = 1;
+		send_only = 0;
+	} else {
+		recv_only = 0;
+		send_only = 1;
+	}
+
+	const int ambient_spm = pgm_secs (30),
+		heartbeat_spm[] = { pgm_msecs (100), /* XXX tune these! */
+				    pgm_msecs (100),
+				    pgm_msecs (100),
+				    pgm_msecs (100),
+				    pgm_msecs (1300),
+				    pgm_secs  (7),
+				    pgm_secs  (16),
+				    pgm_secs  (25),
+				    pgm_secs  (30) };
+
+	pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_SEND_ONLY, &send_only, sizeof(send_only));
+	pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_RECV_ONLY, &recv_only, sizeof(recv_only));
+	pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_MTU, &g_max_tpdu, sizeof(g_max_tpdu));
+	if (direction == 0)  {
+		const int	peer_expiry = pgm_secs (300),
+				spmr_expiry = pgm_msecs (250),
+				nak_bo_ivl = pgm_msecs (50),
+				nak_rpt_ivl = pgm_secs (2),
+				nak_rdata_ivl = pgm_secs (2),
+				nak_data_retries = 50,
+				nak_ncf_retries = 50;
+
+		pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_RXW_SQNS, &g_sqns, sizeof(g_sqns));
+		pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_PEER_EXPIRY, &peer_expiry, sizeof(peer_expiry));
+		pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_SPMR_EXPIRY, &spmr_expiry, sizeof(spmr_expiry));
+		pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_NAK_BO_IVL, &nak_bo_ivl, sizeof(nak_bo_ivl));
+		pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_NAK_RPT_IVL, &nak_rpt_ivl, sizeof(nak_rpt_ivl));
+		pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_NAK_RDATA_IVL, &nak_rdata_ivl, sizeof(nak_rdata_ivl));
+		pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_NAK_DATA_RETRIES, &nak_data_retries, sizeof(nak_data_retries));
+		pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_NAK_NCF_RETRIES, &nak_ncf_retries, sizeof(nak_ncf_retries));
+
+	} else {
+		pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_TXW_SQNS, &g_sqns, sizeof(g_sqns));
+		pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_TXW_MAX_RTE, &g_max_rte, sizeof(g_max_rte));
+
+	}
+	pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_AMBIENT_SPM, &ambient_spm, sizeof(ambient_spm));
+	pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_HEARTBEAT_SPM, &heartbeat_spm, sizeof(heartbeat_spm));
+
+
+	struct pgm_sockaddr_t addr;
+	memset (&addr, 0, sizeof(addr));
+	addr.sa_port = atoi(port);
+	addr.sa_addr.sport = DEFAULT_DATA_SOURCE_PORT;
+	ASSERTF (!pgm_gsi_create_from_hostname (&addr.sa_addr.gsi, &pgm_err), "Creating GSI: %s", pgm_err->message);
+
+	struct pgm_interface_req_t if_req;
+	memset (&if_req, 0, sizeof(if_req));
+	if_req.ir_interface = res->ai_recv_addrs[0].gsr_interface;
+	if_req.ir_scope_id  = 0;
+	if (AF_INET6 == sa_family) {
+		struct sockaddr_in6 sa6;
+		memcpy (&sa6, &res->ai_recv_addrs[0].gsr_group, sizeof(sa6));
+		if_req.ir_scope_id = sa6.sin6_scope_id;
+	}
+
+	ASSERTF(!pgm_bind3 (g_sock,
+			&addr, sizeof(addr),
+			&if_req, sizeof(if_req),
+			&if_req, sizeof(if_req),
+			&pgm_err), 
+			"Binding PGM socket: %s", pgm_err->message
+		);
+
+	/* join IP multicast groups */
+	for (unsigned i = 0; i < res->ai_recv_addrs_len; i++)
+		pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_JOIN_GROUP, &res->ai_recv_addrs[i], sizeof(struct group_req));
+	pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_SEND_GROUP, &res->ai_send_addrs[0], sizeof(struct group_req));
+	pgm_freeaddrinfo (res);
+
+	/* set IP parameters */
+	const int blocking = 1,
+		  multicast_loop = g_multicast_loop ? 1 : 0,
+		  multicast_hops = 16,
+		  dscp = 0x2e << 2;	     /* Expedited Forwarding PHB for network elements, no ECN. */
+
+	pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_MULTICAST_LOOP, &multicast_loop, sizeof(multicast_loop));
+	pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_MULTICAST_HOPS, &multicast_hops, sizeof(multicast_hops));
+	if (AF_INET6 != sa_family)
+		pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_TOS, &dscp, sizeof(dscp));
+	pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_NOBLOCK, &blocking, sizeof(blocking));
+
+	ASSERTF (!pgm_connect (g_sock, &pgm_err), "Connecting PGM socket: %s", pgm_err->message);
+
+	return g_sock;
+
+}
+
 
 int main(int argc, char **argv) {
 
@@ -296,14 +451,9 @@ int main(int argc, char **argv) {
 
 		data->rcv = read_socket;
 	} else if (intype == 2) {
-		pgm_error_t* pgm_err = NULL;
-		pgm_sock_t*  g_sock = NULL;
-		sa_family_t sa_family = AF_INET;
-		
 
-		ASSERTF(!pgm_init (&pgm_err), "Error intializing openpgm");
-		ASSERTF(!pgm_socket (&g_sock, sa_family, SOCK_SEQPACKET, IPPROTO_PGM, &pgm_err), "Failed PGM socket creation");
-		data->reader = g_sock;
+		data->reader = create_pgm_socket(argv[2], argv[3], 0);
+		data->rcv = read_pgm;
 
 		
 	} else err_x("Unknown in-type %d", intype);
@@ -332,6 +482,9 @@ int main(int argc, char **argv) {
 
 		data->snd = write_socket;
 	} else if (outtype == 2) {
+		data->writer = create_pgm_socket(argv[5], argv[6], 1);
+		data->snd = write_pgm;
+
 
 	} else err_x("Unknown in-type %d", outtype);
 
