@@ -330,8 +330,10 @@ struct pgm_sock_t *create_pgm_socket(char *net, char *port, int direction) {
 				nak_rpt_ivl = pgm_secs (2),
 				nak_rdata_ivl = pgm_secs (2),
 				nak_data_retries = 50,
-				nak_ncf_retries = 50;
+				nak_ncf_retries = 50,
+				passive = 0;
 
+		pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_PASSIVE, &passive, sizeof(passive));
 		pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_RXW_SQNS, &g_sqns, sizeof(g_sqns));
 		pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_PEER_EXPIRY, &peer_expiry, sizeof(peer_expiry));
 		pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_SPMR_EXPIRY, &spmr_expiry, sizeof(spmr_expiry));
@@ -381,7 +383,7 @@ struct pgm_sock_t *create_pgm_socket(char *net, char *port, int direction) {
 	pgm_freeaddrinfo (res);
 
 	/* set IP parameters */
-	const int blocking = 1,
+	const int blocking = 0, 
 		  multicast_loop = g_multicast_loop ? 1 : 0,
 		  multicast_hops = 16,
 		  dscp = 0x2e << 2;	     /* Expedited Forwarding PHB for network elements, no ECN. */
