@@ -7,7 +7,7 @@
 
 
 // change this to enable debugging
-#define DEBUG
+// #define DEBUG
 
 // Display stats every STATS_INTERVAL seconds
 #define STATS_INTERVAL 120

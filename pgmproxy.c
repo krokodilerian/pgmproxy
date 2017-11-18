@@ -77,10 +77,9 @@ struct wrdata {
 
 
 static int              g_max_tpdu = 1500;
-static int              g_max_rte = 400*1000;
+static int              g_max_rte = 1250000;
 static int              g_sqns = 100;
 static gboolean         g_multicast_loop = FALSE;
-static int              g_udp_encap_port = 8000;
 
 
 size_t read_socket(void *fd, char *buff, size_t len) {
@@ -498,9 +497,9 @@ int main(int argc, char **argv) {
 		tv.tv_sec = STATS_INTERVAL;
 		tv.tv_nsec = 0;
 		nanosleep( &tv, NULL);
-		fprintf(stderr, "Procesed:\t%ld\tWP %d RP", data->processed, data->rpos);
+/*		fprintf(stderr, "Procesed:\t%ld\tWP %d RP", data->processed, data->rpos);
 		fprintf (stderr, " %d", diffpos(data->rpos, data->wpos));
-		fprintf(stderr, "\n");
+		fprintf(stderr, "\n");*/
 	}
 
 	return 0;
