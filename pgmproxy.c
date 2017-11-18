@@ -290,11 +290,7 @@ struct pgm_sock_t *create_pgm_socket(char *net, char *port, int direction) {
 	sa_family = res->ai_send_addrs[0].gsr_group.ss_family;
 
 	ASSERTF(!pgm_init (&pgm_err), "Error intializing openpgm");
-	ASSERTF(!pgm_socket (&g_sock, sa_family, SOCK_SEQPACKET, IPPROTO_UDP, &pgm_err), "Failed PGM socket creation");
-
-	pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_UDP_ENCAP_UCAST_PORT, &g_udp_encap_port, sizeof(g_udp_encap_port));
-	pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_UDP_ENCAP_MCAST_PORT, &g_udp_encap_port, sizeof(g_udp_encap_port));
-
+	ASSERTF(!pgm_socket (&g_sock, sa_family, SOCK_SEQPACKET, IPPROTO_PGM, &pgm_err), "Failed PGM socket creation");
 
 	const int no_router_assist = 0;
 	pgm_setsockopt (g_sock, IPPROTO_PGM, PGM_IP_ROUTER_ALERT, &no_router_assist, sizeof(no_router_assist));
